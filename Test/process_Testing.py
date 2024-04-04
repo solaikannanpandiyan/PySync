@@ -1,23 +1,13 @@
 import time
 import types
 from concurrent.futures import ProcessPoolExecutor
-from Innovation import Thread, Process
 # from concurrent.futures.process import ProcessPoolExecutor
+from PySync.Parallax import Process,Thread
+from PySync.config import RateLimiter
 
-class deco():
-    def __init__(self, *args, **kwargs):
-        print("init")
-        print(args)
-        print(kwargs)
-
-    def __call__(self, *args, **kwargs):
-        print("calling")
-        print(args)
-        print(kwargs)
-        if len(args) > 0 and isinstance(args[0], types.FunctionType):
-
-            return self
-
+TOKEN_COUNT = 1
+TIME_INTERVAL = 1
+limiter = RateLimiter(max_requests=TOKEN_COUNT, per_seconds=TIME_INTERVAL)
 
 @Process
 def function(x):
@@ -26,28 +16,35 @@ def function(x):
     print("execution completed")
     return 1
 
-@Process
-def function1(x):
-    print("executing")
-    time.sleep(x)
-    print("execution completed")
-    return 2
+@Thread(1000)
+def function1(i):
+    print(f"executing {i}")
+    time.sleep(5)
+    print(f"execution {i} completed")
+    return
 
-@Thread
+
+# disable True or False | default = False
+# custom_proxy_handler None or Proxy object | default = None
+# rate_limiter ratelimiter object | default = None
+
+
+@Thread(1000)
 def function2(i):
-    print("executing")
-    time.sleep(30)
-    print("execution completed")
-    return i
+    print(f"executing {i}")
+    time.sleep(1)
+    print(f"execution {i} completed")
+    return
 
 def wrapper(x):
     x[0](x[1])
 
 if __name__ == '__main__':
-    x = [function2(i) for i in range(3)]
-    time.sleep(15)
-    [print(res.result()) for res in x]
-
+    start = time.time()
+    # x = [function2(i) for i in range(1000)]
+    x = [function2(i) for i in range(1000)]
+    # time.sleep(2)
+    [res.result() for res in x]
 
 
 
@@ -59,6 +56,6 @@ if __name__ == '__main__':
     # print("hello")
     # print("how are you")
     # x.result()
-
+    print('Executed in {} seconds'.format(time.time() - start))
 
 

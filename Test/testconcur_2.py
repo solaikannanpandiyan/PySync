@@ -1,45 +1,46 @@
+import asyncio
 import time
-
-from Scalar.concur2 import concurrent
-# from unsynchronize2 import NonBlockingIO,CpuBound
+from PySync.AsyncFusion import AsyncCooroutine, AsyncProcess, AsyncThread
 
 
-# @NonBlockingIO
-# async def enter(input):
-#     tasks = [async_function(0.1, i) for i in range(input)]
-#     results = await asyncio.gather(*tasks)
-#     for result in results:
-#         print(result)
-
-# @NonBlockingIO
-# async def async_function(seconds, i):
-#     await asyncio.sleep(seconds)
-#     # cpu_function(seconds)
-#     return f'Run concurrently cooroutine! {i}'
-
-# @CpuBound
-# def cpu_function(seconds):
-#     for _ in range(input):
-#         for _ in range(input):
-#             pass
-#     print("cpu processing done")
 
 
-@concurrent
+
+
+@AsyncProcess
+def cpu_function(input):
+    for _ in range(input):
+        for _ in range(input):
+            pass
+    print("cpu processing done")
+
+@AsyncCooroutine
+async def async_function(seconds, i):
+    cpu_function(1000)
+    # cpu_function(seconds)
+    return f'Run concurrently thread! {i}'
+
+@AsyncCooroutine
+async def async_cooroutine_function(input):
+    tasks = [async_function(2, i) for i in range(input)]
+    [task.result() for task in tasks]
+
+
 def work(input):
     # x = enter(10)
     # x.result()
     print("work done")
-    # tasks = [non_async_function(0.1) for _ in range(input)]
-    # print([task.result() for task in tasks])
+    tasks = [async_cooroutine_function(5) for _ in range(input)]
+    print([task.result() for task in tasks])
     # time.sleep(0.1)
 
 
 def run():
-    tasks = []
-    for _ in range(1):
-        tasks.append(work(10000))
-    [tsk.get() for tsk in tasks]
+    work(10)
+    # tasks = []
+    # for _ in range(1):
+    #     tasks.append(work(10))
+    # [tsk.result() for tsk in tasks]
 
 
 if __name__ == "__main__":

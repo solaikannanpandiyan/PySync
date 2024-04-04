@@ -2,10 +2,12 @@ import asyncio
 import concurrent
 import functools
 import inspect
+import os
 import threading
 import time
 import uuid
 from collections import deque
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from threading import Thread
 from typing import Generic, TypeVar
 from .config import default_limiter, RateLimiter
@@ -21,9 +23,10 @@ def CooroutineCallWrapper(x):
     CooroutineTask = f(*args, **kwargs)
     return CooroutineTask
 
-
 class Async_Meta(type):
     def _init_loop(cls):
+        print("Async_Meta __init__ called")
+        print(vars(cls))
         cls._loop = asyncio.new_event_loop()
         cls._thread = Thread(target=cls._thread_target, args=(cls._loop,), daemon=True)
         cls._thread.start()
@@ -47,17 +50,24 @@ class Async_Meta(type):
             Async_Meta._init_loop(cls)
         return cls._thread
 
-    @property
-    def process_executor(cls):
-        if getattr(cls, '_process_executor', None) is None:
-            cls._process_executor = concurrent.futures.ProcessPoolExecutor()
-        return cls._process_executor
+    # @property
+    # def process_executor(cls):
+    #     # print("Async_Meta process_exec called")
+    #     if getattr(cls, '_process_executor', None) is None:
+    #         cls._process_executor = concurrent.futures.ProcessPoolExecutor(cls.worker_count)
+    #     return cls._process_executor
+    #
+    # @property
+    # def thread_executor(cls):
+    #     # print("Async_Meta process_exec called")
+    #     if getattr(cls, '_thread_executor', None) is None:
+    #         cls._thread_executor = concurrent.futures.ThreadPoolExecutor(cls.worker_count)
+    #     return cls._thread_executor
 
 
 class AsyncFuse(object, metaclass=Async_Meta):
-    thread_executor = concurrent.futures.ThreadPoolExecutor()
-    process_executor = None
-    unsync_functions = {}
+    worker_count = os.cpu_count()
+    async_fuse_functions = {}
 
     @staticmethod
     def _thread_target(loop):
@@ -65,8 +75,9 @@ class AsyncFuse(object, metaclass=Async_Meta):
         loop.run_forever()
 
     def __init__(self, *args, **kwargs):
-        self.args = []
-        self.kwargs = {}
+        # print("AsyncFuse __init__ called")
+        self.fuseargs = []
+        self.fusekwargs = {}
 
         self.cpu_bound = False
         self.io_bound = False
@@ -76,16 +87,33 @@ class AsyncFuse(object, metaclass=Async_Meta):
         self.time_interval = 0
         self.max_request = 0
         self.rate_limiter = RateLimiter
+        self.process_executor = ProcessPoolExecutor
+        self.thread_executor = ThreadPoolExecutor
+        # self.max_worker = os.cpu_count()
         if len(args) == 1 and _isfunction(args[0]):
+
             self._set_func(args[0])
+            print("AsyncFuse set_func called")
+            print("args : ", args)
+            print("kwargs : ", kwargs)
         else:
-            self.args = args
+            print("AsyncFuse args,kwargs called")
+            print("args : ", args)
+            print("kwargs : ", kwargs)
+            self.fuseargs = args
+
             if 'custom_proxy_handler' in kwargs.keys():
                 self.custom_proxy_handler = kwargs.pop('custom_proxy_handler')
+            # if 'max_worker' in kwargs.keys():
+            #     self.max_worker = kwargs.pop('max_worker')
+
             if 'io_bound' in kwargs.keys():
                 self.io_bound = kwargs.pop('io_bound', False)
             if 'cooroutine' in kwargs.keys():
                 self.cooroutine = kwargs.pop('cooroutine', False)
+            if 'cpu_bound' in kwargs.keys():
+                self.cpu_bound = kwargs.pop('cpu_bound', False)
+
             if 'disable' in kwargs.keys():
                 self.disable = kwargs.pop('disable', False)
             if 'max_request' in kwargs.keys():
@@ -94,8 +122,11 @@ class AsyncFuse(object, metaclass=Async_Meta):
                 self.time_interval = kwargs.pop('time_interval')
             if 'rate_limiter' in kwargs.keys():
                 self.rate_limiter = kwargs.pop('rate_limiter')
-            self.kwargs = kwargs
+
+            self.fusekwargs = kwargs
             self.func = None
+
+        # AsyncFuse.worker_count =self.max_worker
         self.rate_limiter = self.rate_limiter(max_requests=self.max_request, per_seconds=self.time_interval)
 
     # @property
@@ -116,7 +147,7 @@ class AsyncFuse(object, metaclass=Async_Meta):
         functools.update_wrapper(self, func)
         # On Windows/Mac MP turns the main module into __mp_main__ in multiprocess targets
         module = "__main__" if func.__module__ == "__mp_main__" else func.__module__
-        AsyncFuse.unsync_functions[(module, func.__name__)] = func
+        AsyncFuse.async_fuse_functions[(module, func.__name__)] = func
 
     def __call__(self, *args, **kwargs):
         # print(self.func)
@@ -139,11 +170,11 @@ class AsyncFuse(object, metaclass=Async_Meta):
         else:
             if self.cpu_bound:
                 self.rate_limiter.get_token()
-                future = AsyncFuse.process_executor.submit(
+                future = self.process_executor(*self.fuseargs, **self.fusekwargs).submit(
                     _multiprocess_target, (self.func.__module__, self.func.__name__), *args, **kwargs)
             else:
                 self.rate_limiter.get_token()
-                future = AsyncFuse.thread_executor.submit(self.func, *args, **kwargs)
+                future = self.thread_executor(*self.fuseargs, **self.fusekwargs).submit(self.func, *args, **kwargs)
         # logging.warning(future)
         return AsyncFuture(future)
 
@@ -162,15 +193,14 @@ def _isfunction(obj):
 def _multiprocess_target(func_name, *args, **kwargs):
     # logging.warning(func_name)
     __import__(func_name[0])
-    return AsyncFuse.unsync_functions[func_name](*args, **kwargs)
+    return AsyncFuse.async_fuse_functions[func_name](*args, **kwargs)
 
 
-@staticmethod
-def unsyncFactory(**flags):
+def AsyncFactory(**flags):
     def _custom_unsync(*args, **kwargs):
         syn = AsyncFuse(*args, **kwargs)
-        for k, v in flags.items():
-            syn.kwargs[k] = v
+        # for k, v in flags.items():
+        #     syn.kwargs[k] = v
         return syn
 
     return _custom_unsync
@@ -178,9 +208,9 @@ def unsyncFactory(**flags):
 
 T = TypeVar('T')
 
-AsyncThread = unsyncFactory(io_bound=True)
-AsyncProcess = unsyncFactory(cpu_bound=True)
-AsyncCooroutine = unsyncFactory(cooroutine=True)
+AsyncThread = AsyncFactory(io_bound=True)
+AsyncProcess = AsyncFactory(cpu_bound=True)
+AsyncCooroutine = AsyncFactory(cooroutine=True)
 
 
 class normal_result(object):
@@ -191,6 +221,7 @@ class normal_result(object):
         return self.normal_result
 
 class AsyncFuture(Generic[T]):
+    DISABLE = False
     def __str__(self) -> str:
         return f"future : {self.future},concurrent_Future={self.concurrent_future},"
 
@@ -247,8 +278,9 @@ class AsyncFuture(Generic[T]):
 
 
 
-    @AsyncCooroutine
+    @AsyncCooroutine()
     async def then(self, continuation):
+
         # print(self)
         await self
         # print(self)
